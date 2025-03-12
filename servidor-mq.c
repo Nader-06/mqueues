@@ -4,134 +4,114 @@
 #include <fcntl.h>
 #include <mqueue.h>
 #include <sys/stat.h>
-#include <pthread.h>
 #include "claves.h"
 
 #define MAX_MSG_SIZE 1024
 #define MQ_NAME "/mq_servidor"
+#define MQ_RESPONSE "/mq_cliente"
 
-//Struct to pass multiple arguments to the thread
-typedef struct {
-    char message[MAX_MSG_SIZE];
-    int client_id;
-} ThreadData;
+// Function to process client requests **sequentially**
+void handle_request(char *buffer) {
+    char response[MAX_MSG_SIZE];
 
-//Thread function (matches your structure)
-void *handle_requests(void *arg) {
-    ThreadData *data = (ThreadData *)arg;
-    char buffer[MAX_MSG_SIZE];
-    strcpy(buffer, data->message);  // Copy message to buffer
-    int client_id = data->client_id;  // Store client ID
-    free(data);  // Free memory after copying
+    // Command and variables
+    char command[10];
+    int key;
+    char value1[256];
+    int N_value2;
+    double value2[32];
+    struct Coord value3;
 
-    fprintf(stderr,"Processing request from client %d\n", client_id);
+    printf("Processing request: %s\n", buffer);
 
-    if (strcmp(buffer, "DESTROY") == 0) {
-        printf("User called DESTROY\n");
-    } 
-    else if (strcmp(buffer, "SET") == 0) {
-        printf("User called SET\n");
-        set_value(1, "Hello, World!", 3, (double[]){1.1, 2.2, 3.3}, (struct Coord){10, 20});
-    } 
-    else if (strcmp(buffer, "GET") == 0) {
-        printf("User called GET\n");
-        char retrieved_value[256];
-        int N_value2;
-        double v2_out[32];
-        struct Coord v3_out;
-        get_value(1, retrieved_value, &N_value2, v2_out, &v3_out);
-        printf("Retrieved: %s, N_value2: %d, Coord: (%d, %d)\n", retrieved_value, N_value2, v3_out.x, v3_out.y);
-    } 
-    else if (strcmp(buffer, "MODIFY") == 0) {
-        printf("User called MODIFY\n");
-        modify_value(1, "Modified Value", 3, (double[]){9.9, 8.8, 7.7}, (struct Coord){50, 60});
-    } 
-    else if (strcmp(buffer, "DELETE") == 0) {
-        printf("User called DELETE\n");
-        delete_key(1);
-    } 
-    else if (strcmp(buffer, "EXIST") == 0) {
-        printf("User called EXIST\n");
-        exist(1);
-    } 
-    else {
-        printf("Invalid command\n");
+    if (sscanf(buffer, "%s %d %255s %d", command, &key, value1, &N_value2) >= 2) {
+        if (strcmp(command, "SET") == 0) {
+            printf("User called SET\n");
+            int result = set_value(key, value1, N_value2, value2, value3);
+            snprintf(response, sizeof(response), "%d", result);
+        } 
+        else if (strcmp(command, "GET") == 0) {
+            printf("User called GET\n");
+            int result = get_value(key, value1, &N_value2, value2, &value3);
+            snprintf(response, sizeof(response), "%d %s %d", result, value1, N_value2);
+        } 
+        else if (strcmp(command, "MODIFY") == 0) {
+            printf("User called MODIFY\n");
+            int result = modify_value(key, value1, N_value2, value2, value3);
+            snprintf(response, sizeof(response), "%d", result);
+        } 
+        else if (strcmp(command, "DELETE") == 0) {
+            printf("User called DELETE\n");
+            int result = delete_key(key);
+            snprintf(response, sizeof(response), "%d", result);
+        } 
+        else if (strcmp(command, "EXIST") == 0) {
+            printf("User called EXIST\n");
+            int result = exist(key);
+            snprintf(response, sizeof(response), "%d", result);
+        } 
+        else if (strcmp(command, "DESTROY") == 0) {
+            printf("User called DESTROY\n");
+            int result = destroy();
+            snprintf(response, sizeof(response), "%d", result);
+        } 
+        else {
+            printf("Invalid command\n");
+            snprintf(response, sizeof(response), "-1");
+        }
+    } else {
+        printf("Malformed request\n");
+        snprintf(response, sizeof(response), "-1");
     }
 
-    return NULL;
+    // Send response back to client via MQ
+    mqd_t mq_client = mq_open(MQ_RESPONSE, O_WRONLY);
+    if (mq_client == (mqd_t)-1) {
+        perror("mq_open (client response)");
+    } else {
+        mq_send(mq_client, response, strlen(response) + 1, 0);
+        mq_close(mq_client);
+    }
 }
 
 int main(int argc, char *argv[]) {
     mqd_t mq;
     struct mq_attr attr;
     char buffer[MAX_MSG_SIZE];
-    
-    //Message Queue attributes
+
     attr.mq_flags = 0;
     attr.mq_maxmsg = 10;
     attr.mq_msgsize = MAX_MSG_SIZE;
     attr.mq_curmsgs = 0;
 
-    //Open the message queue
     mq = mq_open(MQ_NAME, O_CREAT | O_RDONLY, 0644, &attr);
     if (mq == (mqd_t)-1) {
         perror("mq_open");
         exit(1);
     }
 
-    printf("Servidor de mensajes iniciado hello world\n");
-
-    int client_id = 0;  // Simulated client ID counter
+    printf("Servidor de mensajes iniciado (Sequential Processing)\n");
 
     while (1) {
-        char *buffer = malloc(MAX_MSG_SIZE);
-        if (!buffer) {
-            perror("malloc");
-            exit(1);
-        }
         memset(buffer, 0, MAX_MSG_SIZE);
 
-        //Receive message from client
         ssize_t bytes_read = mq_receive(mq, buffer, MAX_MSG_SIZE, NULL);
         if (bytes_read == -1) {
             perror("mq_receive");
-            free(buffer);
             continue;
         }
 
-        //Stop server if "EXIT" command is received
         if (strcmp(buffer, "EXIT") == 0) {
             printf("Server shutting down.\n");
-            free(buffer);
             break;
         }
 
-        //Allocate memory for the thread data
-        ThreadData *data = malloc(sizeof(ThreadData));
-        if (!data) {
-            perror("malloc");
-            free(buffer);
-            continue;
-        }
-
-        strcpy(data->message, buffer);
-        data->client_id = client_id++;
-        free(buffer); 
-
-        //new thread to handle the request
-        pthread_t thread;
-        if (pthread_create(&thread, NULL, handle_requests, data) != 0) {
-            perror("pthread_create");
-            free(data);
-        } else {
-            pthread_detach(thread); 
-        }
+        // Directly process the request in the main loop
+        handle_request(buffer);
     }
 
-    //Close and clean up the message queue
     printf("Cerrando servidor\n");
     mq_close(mq);
     mq_unlink(MQ_NAME);
-
     return 0;
 }
