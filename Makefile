@@ -1,41 +1,30 @@
-# Compiler and Flags
 CC = gcc
-CFLAGS = -Wall -Wextra -g -pthread -lrt -fPIC
+CFLAGS = -Wall -Wextra -pthread -lrt
+LDFLAGS = -lrt -pthread
 
-# Source Files
-LIB_SRCS = proxy-mq.c
-SERVER_SRCS = servidor-mq.c claves.c
-CLIENT_SRCS = app-cliente.c
-
-# Object Files
-LIB_OBJS = $(LIB_SRCS:.c=.o)
-SERVER_OBJS = $(SERVER_SRCS:.c=.o)
-CLIENT_OBJS = $(CLIENT_SRCS:.c=.o)
-
-# Executables
+# Files
+SRCS = claves.c servidor-mq.c proxy-mq.c app-cliente.c
+OBJS = claves.o servidor-mq.o proxy-mq.o app-cliente.o
 LIBRARY = libclaves.so
-SERVER = servidor-mq
-CLIENT = client
 
-# Default Target
-all: $(LIBRARY) $(SERVER) $(CLIENT)
+# Build server executable
+servidor-mq: servidor-mq.o claves.o
+	$(CC) -o servidor-mq servidor-mq.o claves.o $(LDFLAGS)
 
-# Compile Shared Library (libclaves.so)
-$(LIBRARY): $(LIB_OBJS)
-	$(CC) -shared -o $@ $^ $(CFLAGS)
+# Build proxy shared library (Ensure Position Independent Code)
+$(LIBRARY): proxy-mq.o
+	$(CC) -shared -o $(LIBRARY) proxy-mq.o $(LDFLAGS) -fPIC
 
-# Compile Server
-$(SERVER): $(SERVER_OBJS)
-	$(CC) -o $@ $^ $(CFLAGS)
+# Build client executable
+app-cliente: app-cliente.o $(LIBRARY)
+	$(CC) -o app-cliente app-cliente.o -L. -lclaves $(LDFLAGS)
 
-# Compile Client (Links to libclaves.so)
-$(CLIENT): $(CLIENT_OBJS)
-	$(CC) -o $@ $^ -L. -lclaves $(CFLAGS)
-
-# Object Files Compilation
+# Compile source files
 %.o: %.c
-	$(CC) -c $< -o $@ $(CFLAGS)
+	$(CC) $(CFLAGS) -fPIC -c $< -o $@
 
-# Clean Everything
+# Clean up compiled files
 clean:
-	rm -f $(LIBRARY) $(SERVER) $(CLIENT) *.o
+	rm -f *.o servidor-mq app-cliente $(LIBRARY)
+
+.PHONY: clean

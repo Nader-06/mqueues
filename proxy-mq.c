@@ -2,103 +2,125 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
-#include <mqueue.h>
 #include <sys/stat.h>
+#include <mqueue.h>
+#include <unistd.h>
 #include "claves.h"
 
-#define MQ_NAME "/mq_servidor"
-#define MQ_RESPONSE "/mq_cliente"
-#define MAX_MSG_SIZE 1024
+#define SERVER_QUEUE "/server_queue"
+#define CLIENT_QUEUE_TEMPLATE "/client_queue_%d"
 
-// Message Queue Descriptors
-mqd_t mq_server, mq_client;
+// Message structure
+typedef struct {
+    int request_type;
+    int key;
+    char value1[256];
+    int N_value2;
+    double V_value2[32];
+    struct Coord value3;
+    char client_queue_name[64];
+} Message;
 
-// Initialize message queues
-void init_mq() {
-    // Open the server queue (WRITE)
-    mq_server = mq_open(MQ_NAME, O_WRONLY);
-    if (mq_server == (mqd_t)-1) {
-        perror("mq_open (server) FAILED");
-        exit(1);
-    }
-
-    // Define attributes for the client queue
+int send_request(Message *msg, int *response) {
+    // Create unique client queue name
+    char client_queue_name[64];
+    snprintf(client_queue_name, sizeof(client_queue_name), CLIENT_QUEUE_TEMPLATE, getpid());
+    strcpy(msg->client_queue_name, client_queue_name);
+    
     struct mq_attr attr;
     attr.mq_flags = 0;
     attr.mq_maxmsg = 10;
-    attr.mq_msgsize = MAX_MSG_SIZE;
+    attr.mq_msgsize = sizeof(int);
     attr.mq_curmsgs = 0;
-
-    // Open the client response queue (READ)
-    mq_client = mq_open(MQ_RESPONSE, O_RDONLY | O_CREAT, 0644, &attr);
-    if (mq_client == (mqd_t)-1) {
-        perror("mq_open (client) FAILED");
-        exit(1);
+    
+    // Create client queue
+    mqd_t client_queue = mq_open(client_queue_name, O_CREAT | O_RDONLY, 0666, &attr);
+    if (client_queue == -1) {
+        perror("mq_open (client queue)");
+        return -1;
     }
-}
-
-// Close message queues
-void close_mq() {
-    mq_close(mq_server);
-    mq_close(mq_client);
-}
-
-// Send a request to the server and wait for a response
-int send_request(const char *request) {
-    char response[MAX_MSG_SIZE];
-
-    // Send request to the server
-    if (mq_send(mq_server, request, strlen(request) + 1, 0) == -1) {
+    
+    // Send message to server
+    mqd_t server_queue = mq_open(SERVER_QUEUE, O_WRONLY);
+    if (server_queue == -1) {
+        perror("mq_open (server)");
+        mq_unlink(client_queue_name);
+        return -1;
+    }
+    
+    if (mq_send(server_queue, (char *)msg, sizeof(Message), 0) == -1) {
         perror("mq_send");
-        return -2;  // Communication error
+        mq_close(server_queue);
+        mq_unlink(client_queue_name);
+        return -1;
     }
-
-    // Receive response from the server
-    if (mq_receive(mq_client, response, MAX_MSG_SIZE, NULL) == -1) {
+    
+    mq_close(server_queue);
+    
+    // Wait for response
+    if (mq_receive(client_queue, (char *)response, sizeof(int), NULL) == -1) {
         perror("mq_receive");
-        return -2;
+        mq_close(client_queue);
+        mq_unlink(client_queue_name);
+        return -1;
     }
-
-    return atoi(response);  // Convert response to integer and return
+    
+    mq_close(client_queue);
+    mq_unlink(client_queue_name);
+    return 0;
 }
 
-// API Functions
-int destroy() {
-    init_mq();
-    return send_request("DESTROY");
+int destroy(void) {
+    Message msg = { .request_type = 6 };
+    int response;
+    return send_request(&msg, &response) == 0 ? response : -1;
 }
 
 int set_value(int key, char *value1, int N_value2, double *V_value2, struct Coord value3) {
-    init_mq();
-    char request[MAX_MSG_SIZE];
-    snprintf(request, sizeof(request), "SET %d %s %d", key, value1, N_value2);
-    return send_request(request);
+    if (N_value2 < 1 || N_value2 > 32) return -1;
+    
+    Message msg = { .request_type = 1, .key = key, .N_value2 = N_value2, .value3 = value3 };
+    strncpy(msg.value1, value1, 255);
+    msg.value1[255] = '\0';
+    memcpy(msg.V_value2, V_value2, N_value2 * sizeof(double));
+    
+    int response;
+    return send_request(&msg, &response) == 0 ? response : -1;
 }
 
 int get_value(int key, char *value1, int *N_value2, double *V_value2, struct Coord *value3) {
-    init_mq();
-    char request[MAX_MSG_SIZE];
-    snprintf(request, sizeof(request), "GET %d", key);
-    return send_request(request);
+    Message msg = { .request_type = 2, .key = key };
+    int response;
+    if (send_request(&msg, &response) != 0 || response == -1) return -1;
+    
+    strncpy(value1, msg.value1, 255);
+    value1[255] = '\0';
+    *N_value2 = msg.N_value2;
+    memcpy(V_value2, msg.V_value2, (*N_value2) * sizeof(double));
+    *value3 = msg.value3;
+    return 0;
 }
 
 int modify_value(int key, char *value1, int N_value2, double *V_value2, struct Coord value3) {
-    init_mq();
-    char request[MAX_MSG_SIZE];
-    snprintf(request, sizeof(request), "MODIFY %d %s %d", key, value1, N_value2);
-    return send_request(request);
+    if (N_value2 < 1 || N_value2 > 32) return -1;
+    
+    Message msg = { .request_type = 3, .key = key, .N_value2 = N_value2, .value3 = value3 };
+    strncpy(msg.value1, value1, 255);
+    msg.value1[255] = '\0';
+    memcpy(msg.V_value2, V_value2, N_value2 * sizeof(double));
+    
+    int response;
+    return send_request(&msg, &response) == 0 ? response : -1;
 }
 
 int delete_key(int key) {
-    init_mq();
-    char request[MAX_MSG_SIZE];
-    snprintf(request, sizeof(request), "DELETE %d", key);
-    return send_request(request);
+    Message msg = { .request_type = 4, .key = key };
+    int response;
+    return send_request(&msg, &response) == 0 ? response : -1;
 }
 
 int exist(int key) {
-    init_mq();
-    char request[MAX_MSG_SIZE];
-    snprintf(request, sizeof(request), "EXIST %d", key);
-    return send_request(request);
+    Message msg = { .request_type = 5, .key = key };
+    int response;
+    return send_request(&msg, &response) == 0 ? response : -1;
 }

@@ -1,161 +1,143 @@
-#include<stdio.h>
-#include<stdlib.h>
-#include<string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
 #include "claves.h"
 
-typedef struct key_values{
+// Define node structure for linked list
+typedef struct Node {
     int key;
-    char value_1[256];
-    double value_2[32];
-    int N_value_2;
-    struct Coord value_3;
-    struct key_values *next;//key value will be the pointer to our nodes in the linked list
-}key_value;
+    char value1[256];
+    int N_value2;
+    double V_value2[32];
+    struct Coord value3;
+    struct Node *next;
+} Node;
 
-key_value *head = NULL;
-int destroy(){
-    key_value *current = head;
-    while(current!=NULL){
-        key_value *temp = current;
+// Head of the linked list
+static Node *head = NULL;
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Destroy all elements in the list
+int destroy(void) {
+    pthread_mutex_lock(&mutex);
+    Node *current = head;
+    while (current) {
+        Node *temp = current;
         current = current->next;
         free(temp);
     }
     head = NULL;
+    pthread_mutex_unlock(&mutex);
     return 0;
 }
 
-int set_value(int key,char *value_1,int N_value_2,double *value_2,struct Coord  value_3){
-    if(key<0 || strlen(value_1)>255 || N_value_2<1 || N_value_2>32){ //if N is out of  range or key less than 0
-        return -1;
-    }
-    key_value *current = head;
-    while(current!=NULL){
-        if(current->key == key){//make sure no repeated keys
-            fprintf(stderr,"Key already exists\n");
-            return -1;
+// Insert a new key-value pair
+int set_value(int key, char *value1, int N_value2, double *V_value2, struct Coord value3) {
+    if (N_value2 < 1 || N_value2 > 32) return -1;
+    
+    pthread_mutex_lock(&mutex);
+    Node *current = head;
+    while (current) {
+        if (current->key == key) {
+            pthread_mutex_unlock(&mutex);
+            return -1; // Key already exists
         }
         current = current->next;
-
     }
-    key_value *new_node = (key_value*)malloc(sizeof(key_value));
     
-    if(!new_node){
+    Node *new_node = (Node *)malloc(sizeof(Node));
+    if (!new_node) {
+        pthread_mutex_unlock(&mutex);
         return -1;
     }
-    //store key values
     new_node->key = key;
-
-    strncpy(new_node->value_1,value_1,255);
-    new_node->value_1[255] = '\0';//null termination
-
-    new_node->N_value_2 = N_value_2;
-
-    for (int i = 0; i<N_value_2; i++){
-        new_node->value_2[i]= value_2[i];
-    }
-
-    new_node->value_3 = value_3;
-
-    new_node->next = head;//link new node
+    strncpy(new_node->value1, value1, 255);
+    new_node->value1[255] = '\0';
+    new_node->N_value2 = N_value2;
+    memcpy(new_node->V_value2, V_value2, N_value2 * sizeof(double));
+    new_node->value3 = value3;
+    new_node->next = head;
     head = new_node;
-    return 0;
-}
-
-int get_value(int key,char *value_1,int *N_value_2,double *V_value_2,struct Coord *value_3){
-    if(key<0||value_1 == NULL||N_value_2==NULL||V_value_2==NULL){
-        fprintf(stderr,"Invalid parameters\n");
-        return -1;
-    }
-    key_value *current = head;
-    while(current!=NULL&&current->key!=key){
-        current = current->next;
-    }
-    if(current==NULL){
-        fprintf(stderr,"Key not found\n");
-        return -1;
-    }
-    //get values 
-    strncpy(value_1,current->value_1,255);
-    *N_value_2 = current->N_value_2;
-    for (int i =0; i <current->N_value_2; i++){
-        V_value_2[i] = current->value_2[i];
-    }
-    *value_3 = current->value_3;
-    return 0;
-}
-
-int modify_value(int key,char *value_1,int N_value_2,double *V_value_2,struct Coord value_3){
-    if(key<0 ||value_1 == NULL || strlen(value_1)>255 || N_value_2<1 || N_value_2>32){ 
-        fprintf(stderr,"Invalid parameters\n");
-        return -1;
-    }
-    key_value *current = head;
-    while(current!=NULL&&current->key!=key){
-        current = current->next;
-    }
-    if(current==NULL){
-        fprintf(stderr,"Key not found\n");
-        return -1;
-    }    
-    //modify values
-    strncpy(current->value_1,value_1,255);
-    current->value_1[255] = '\0';
-    current->N_value_2 = N_value_2;
-    for (int i =0; i <current->N_value_2; i++){
-        current->value_2[i] = V_value_2[i];
-    }
-    current->value_3 = value_3;
-    fprintf(stderr,"key: %d, value1: %s, N_value2: %d, value2: %f %f %f, value3: %d %d\n",current->key,current->value_1,current->N_value_2,current->value_2[0],current->value_2[1],current->value_2[2],current->value_3.x,current->value_3.y);
-    return 0;
     
+    pthread_mutex_unlock(&mutex);
+    return 0;
 }
 
-int delete_key(int key){
-    if(key<0){
-        fprintf(stderr,"Invalid key\n");
-        return -1;
+// Retrieve values for a given key
+int get_value(int key, char *value1, int *N_value2, double *V_value2, struct Coord *value3) {
+    pthread_mutex_lock(&mutex);
+    Node *current = head;
+    while (current) {
+        if (current->key == key) {
+            strncpy(value1, current->value1, 255);
+            value1[255] = '\0';
+            *N_value2 = current->N_value2;
+            memcpy(V_value2, current->V_value2, current->N_value2 * sizeof(double));
+            *value3 = current->value3;
+            pthread_mutex_unlock(&mutex);
+            return 0;
+        }
+        current = current->next;
     }
-    key_value *current = head;
-    key_value *prev = NULL;
-    if(current == NULL){
-        fprintf(stderr,"List is empty\n");
-        return -1;
+    pthread_mutex_unlock(&mutex);
+    return -1; // Key not found
+}
+
+// Modify existing key-value pair
+int modify_value(int key, char *value1, int N_value2, double *V_value2, struct Coord value3) {
+    if (N_value2 < 1 || N_value2 > 32) return -1;
+    
+    pthread_mutex_lock(&mutex);
+    Node *current = head;
+    while (current) {
+        if (current->key == key) {
+            strncpy(current->value1, value1, 255);
+            current->value1[255] = '\0';
+            current->N_value2 = N_value2;
+            memcpy(current->V_value2, V_value2, N_value2 * sizeof(double));
+            current->value3 = value3;
+            pthread_mutex_unlock(&mutex);
+            return 0;
+        }
+        current = current->next;
     }
-    while(current!=NULL && current->key != key){
+    pthread_mutex_unlock(&mutex);
+    return -1; // Key not found
+}
+
+// Delete a key-value pair
+int delete_key(int key) {
+    pthread_mutex_lock(&mutex);
+    Node *current = head;
+    Node *prev = NULL;
+    
+    while (current) {
+        if (current->key == key) {
+            if (prev) prev->next = current->next;
+            else head = current->next;
+            free(current);
+            pthread_mutex_unlock(&mutex);
+            return 0;
+        }
         prev = current;
         current = current->next;
-
     }
-    if(current==NULL){
-        fprintf(stderr,"Key not found\n");
-        return -1;
-    }
-    else{
-        if(prev == NULL){//deleting the head
-            head = current->next;
-            free(current);//remove from memory space
-        }
-        else{
-            prev->next = current->next;
-            free(current);
-        }
-    }       
-    return 0;
+    pthread_mutex_unlock(&mutex);
+    return -1; // Key not found
 }
 
-int exist(int key){
-    if(key<0){
-        fprintf(stderr,"Invalid key\n");
-        return 0;//in this case 0 for key not found
-    }
-    key_value *current = head;
-    while(current!=NULL){
-        if(current->key == key){
-            fprintf(stderr,"Key found\n");
-            return 1;//key found-> node found
+// Check if a key exists
+int exist(int key) {
+    pthread_mutex_lock(&mutex);
+    Node *current = head;
+    while (current) {
+        if (current->key == key) {
+            pthread_mutex_unlock(&mutex);
+            return 1; // Key exists
         }
         current = current->next;
     }
-    fprintf(stderr,"Key not found\n");
-    return 0;//key not found
+    pthread_mutex_unlock(&mutex);
+    return 0; // Key does not exist
 }
