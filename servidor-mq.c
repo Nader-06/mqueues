@@ -66,6 +66,7 @@ void process_request(Message *msg) {
         perror("mq_open (client queue)");
         return;
     }
+
     mq_send(client_queue, (char *)&result, sizeof(int), 0);
     mq_close(client_queue);
 }
