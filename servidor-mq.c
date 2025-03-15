@@ -25,29 +25,41 @@ typedef struct {
 
 void process_request(Message *msg) {
     int result;
+    printf("Received request type: %d for key: %d from client: %s\n", msg->request_type, msg->key, msg->client_queue_name);
+
     switch (msg->request_type) {
         case 1: // set_value
+            printf("Processing set_value: key=%d, value1=%s, N_value2=%d, value3=(%d, %d)\n", msg->key, msg->value1, msg->N_value2, msg->value3.x, msg->value3.y);
             result = set_value(msg->key, msg->value1, msg->N_value2, msg->V_value2, msg->value3);
             break;
         case 2: // get_value
+            printf("Processing get_value: key=%d\n", msg->key);
             result = get_value(msg->key, msg->value1, &msg->N_value2, msg->V_value2, &msg->value3);
+            printf("Retrieved: value1=%s, N_value2=%d, value3=(%d, %d)\n", msg->value1, msg->N_value2, msg->value3.x, msg->value3.y);
             break;
         case 3: // modify_value
+            printf("Processing modify_value: key=%d, new_value1=%s, N_value2=%d, new_value3=(%d, %d)\n", msg->key, msg->value1, msg->N_value2, msg->value3.x, msg->value3.y);
             result = modify_value(msg->key, msg->value1, msg->N_value2, msg->V_value2, msg->value3);
             break;
         case 4: // delete_key
+            printf("Processing delete_key: key=%d\n", msg->key);
             result = delete_key(msg->key);
             break;
         case 5: // exist
+            printf("Processing exist: key=%d\n", msg->key);
             result = exist(msg->key);
             break;
         case 6: // destroy
+            printf("Processing destroy\n");
             result = destroy();
             break;
         default:
+            printf("Invalid request type: %d\n", msg->request_type);
             result = -1;
     }
-    
+
+    printf("Response for key %d: %d\n", msg->key, result);
+
     // Send response back to client
     mqd_t client_queue = mq_open(msg->client_queue_name, O_WRONLY);
     if (client_queue == -1) {
