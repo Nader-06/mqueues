@@ -17,7 +17,7 @@ $(LIBRARY): proxy-mq.o
 
 # Build client executable
 app-cliente: app-cliente.o $(LIBRARY)
-	$(CC) -o app-cliente app-cliente.o -L. -lclaves $(LDFLAGS)
+	$(CC) -o app-cliente app-cliente.o -L. -lclaves $(LDFLAGS) -Wl,-rpath=.
 
 # Compile source files
 %.o: %.c
